@@ -24,6 +24,8 @@ const accessKeyBytes = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
 // Ensure provider defined types fully satisfy framework interfaces.
 var _ resource.ResourceWithConfigure = &UserResource{}
+var _ resource.ResourceWithImportState = &UserResource{}
+var _ resource.ResourceWithImportState = &UserResource{}
 
 func NewUserResource() resource.Resource {
 	return &UserResource{}
@@ -572,6 +574,46 @@ func (m stringPrivateUnknownModifier) PlanModifyString(ctx context.Context, req 
 	if data != nil {
 		if string(data) == "1" {
 			resp.PlanValue = types.StringUnknown()
+		}
+	}
+}
+
+func (r *UserResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
+	// The import ID should be the full user ID (tenant$username or just username)
+	userId := req.ID
+
+	// Use the ID as-is for the resource ID
+	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
+
+	// Also set the ID in the response state for immediate use
+	resp.State.SetAttribute(ctx, path.Root("id"), userId)
+
+	// Fetch user details to import existing S3 credentials
+	user, err := r.client.Admin.GetUser(ctx, admin.User{ID: userId})
+	if err != nil {
+		resp.Diagnostics.AddError("could not get user for import", err.Error())
+		return
+	}
+
+	// Import user attributes
+	resp.State.SetAttribute(ctx, path.Root("op_mask"), user.OpMask)
+
+	// Set principal ARN
+	splittedId := strings.SplitN(userId, "$", 2)
+	if len(splittedId) == 2 {
+		resp.State.SetAttribute(ctx, path.Root("principal"), fmt.Sprintf("arn:aws:iam::%s:user/%s", splittedId[0], splittedId[1]))
+	} else {
+		resp.State.SetAttribute(ctx, path.Root("principal"), fmt.Sprintf("arn:aws:iam:::user/%s", userId))
+	}
+
+	// Import existing S3 credentials if they exist
+	if len(user.Keys) > 0 {
+		resp.State.SetAttribute(ctx, path.Root("access_key"), user.Keys[0].AccessKey)
+		resp.State.SetAttribute(ctx, path.Root("secret_key"), user.Keys[0].SecretKey)
+
+		// Set exclusive credentials based on number of keys
+		if len(user.Keys) > 1 {
+			resp.State.SetAttribute(ctx, path.Root("exclusive_s3_credentials"), false)
 		}
 	}
 }
