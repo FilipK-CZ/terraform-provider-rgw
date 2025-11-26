@@ -241,9 +241,15 @@ func (r *UserResource) Create(ctx context.Context, req resource.CreateRequest, r
 		return
 	}
 
-	// set resource id
-	data.Id = types.StringValue(createdUser.ID)
-	data.Principal = types.StringValue(fmt.Sprintf("arn:aws:iam::%s:user/%s", data.Tenant.ValueString(), data.Username.ValueString()))
+	// set resource id - use the constructed ID to ensure consistency
+	data.Id = types.StringValue(rgwUser.ID)
+
+	// set principal ARN
+	if data.Tenant.IsNull() {
+		data.Principal = types.StringValue(fmt.Sprintf("arn:aws:iam:::user/%s", data.Username.ValueString()))
+	} else {
+		data.Principal = types.StringValue(fmt.Sprintf("arn:aws:iam::%s:user/%s", data.Tenant.ValueString(), data.Username.ValueString()))
+	}
 
 	// set access and secret key
 	if generateKey {
