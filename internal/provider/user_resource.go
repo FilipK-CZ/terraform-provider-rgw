@@ -151,17 +151,11 @@ func (r *UserResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 			"access_key": schema.StringAttribute{
 				MarkdownDescription: "The generated access key",
 				Computed:            true,
-				PlanModifiers: []planmodifier.String{
-					stringPrivateUnknownModifier{"access_key"},
-				},
 			},
 			"secret_key": schema.StringAttribute{
 				MarkdownDescription: "The generated secret key",
 				Computed:            true,
-				//Sensitive:           true,
-				PlanModifiers: []planmodifier.String{
-					stringPrivateUnknownModifier{"secret_key"},
-				},
+				Sensitive:           true,
 			},
 			"purge_data_on_delete": schema.BoolAttribute{
 				MarkdownDescription: "Purge user data on deletion",
