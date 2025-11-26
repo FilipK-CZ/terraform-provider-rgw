@@ -17,6 +17,26 @@ resource "rgw_user" "test" {
   display_name = "Karl Johann Schubert"
 }
 
+# Example user with quotas enabled
+resource "rgw_user" "test_with_quota" {
+  username     = "test-quota"
+  display_name = "Test User With Quota"
+  
+  # User quota: limit total storage to 1GB
+  user_quota {
+    enabled     = true
+    max_size_kb = 1048576  # 1GB in KB
+    max_objects = -1       # unlimited objects
+  }
+  
+  # Bucket quota: limit each bucket to 500MB and 10000 objects
+  bucket_quota {
+    enabled     = true
+    max_size_kb = 512000   # 500MB in KB
+    max_objects = 10000
+  }
+}
+
 resource "rgw_bucket" "test" {
   name = "test"
 }

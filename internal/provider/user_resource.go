@@ -36,26 +36,34 @@ type UserResource struct {
 }
 
 type UserResourceModel struct {
-	Id                     types.String   `tfsdk:"id"`
-	Username               types.String   `tfsdk:"username"`
-	DisplayName            types.String   `tfsdk:"display_name"`
-	Email                  types.String   `tfsdk:"email"`
-	GenerateS3Credentials  types.Bool     `tfsdk:"generate_s3_credentials"`
-	ExclusiveS3Credentials types.Bool     `tfsdk:"exclusive_s3_credentials"`
-	Caps                   []UserCapModel `tfsdk:"caps"`
-	OpMask                 types.String   `tfsdk:"op_mask"`
-	MaxBuckets             types.Int64    `tfsdk:"max_buckets"`
-	Suspended              types.Bool     `tfsdk:"suspended"`
-	Tenant                 types.String   `tfsdk:"tenant"`
-	AccessKey              types.String   `tfsdk:"access_key"`
-	SecretKey              types.String   `tfsdk:"secret_key"`
-	PurgeDataOnDelete      types.Bool     `tfsdk:"purge_data_on_delete"`
-	Principal              types.String   `tfsdk:"principal"`
+	Id                     types.String    `tfsdk:"id"`
+	Username               types.String    `tfsdk:"username"`
+	DisplayName            types.String    `tfsdk:"display_name"`
+	Email                  types.String    `tfsdk:"email"`
+	GenerateS3Credentials  types.Bool      `tfsdk:"generate_s3_credentials"`
+	ExclusiveS3Credentials types.Bool      `tfsdk:"exclusive_s3_credentials"`
+	Caps                   []UserCapModel  `tfsdk:"caps"`
+	OpMask                 types.String    `tfsdk:"op_mask"`
+	MaxBuckets             types.Int64     `tfsdk:"max_buckets"`
+	Suspended              types.Bool      `tfsdk:"suspended"`
+	Tenant                 types.String    `tfsdk:"tenant"`
+	AccessKey              types.String    `tfsdk:"access_key"`
+	SecretKey              types.String    `tfsdk:"secret_key"`
+	PurgeDataOnDelete      types.Bool      `tfsdk:"purge_data_on_delete"`
+	Principal              types.String    `tfsdk:"principal"`
+	UserQuota              *UserQuotaModel `tfsdk:"user_quota"`
+	BucketQuota            *UserQuotaModel `tfsdk:"bucket_quota"`
 }
 
 type UserCapModel struct {
 	Type types.String `tfsdk:"type"`
 	Perm types.String `tfsdk:"perm"`
+}
+
+type UserQuotaModel struct {
+	Enabled    types.Bool  `tfsdk:"enabled"`
+	MaxSizeKb  types.Int64 `tfsdk:"max_size_kb"`
+	MaxObjects types.Int64 `tfsdk:"max_objects"`
 }
 
 func (r *UserResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -152,11 +160,17 @@ func (r *UserResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 			"access_key": schema.StringAttribute{
 				MarkdownDescription: "The generated access key",
 				Computed:            true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
 			},
 			"secret_key": schema.StringAttribute{
 				MarkdownDescription: "The generated secret key",
 				Computed:            true,
 				Sensitive:           true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
 			},
 			"purge_data_on_delete": schema.BoolAttribute{
 				MarkdownDescription: "Purge user data on deletion",
@@ -165,6 +179,65 @@ func (r *UserResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 			"principal": schema.StringAttribute{
 				MarkdownDescription: "Computed principal to be used in policies",
 				Computed:            true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
+			},
+			"user_quota": schema.SingleNestedAttribute{
+				MarkdownDescription: "User quota settings",
+				Optional:            true,
+				Attributes: map[string]schema.Attribute{
+					"enabled": schema.BoolAttribute{
+						MarkdownDescription: "Enable or disable user quota",
+						Required:            true,
+					},
+					"max_size_kb": schema.Int64Attribute{
+						MarkdownDescription: "Maximum size in KB. If not set or -1, it means unlimited.",
+						Optional:            true,
+						Computed:            true,
+						PlanModifiers: []planmodifier.Int64{
+							int64DefaultModifier{-1},
+							int64planmodifier.UseStateForUnknown(),
+						},
+					},
+					"max_objects": schema.Int64Attribute{
+						MarkdownDescription: "Maximum number of objects. If not set or -1, it means unlimited.",
+						Optional:            true,
+						Computed:            true,
+						PlanModifiers: []planmodifier.Int64{
+							int64DefaultModifier{-1},
+							int64planmodifier.UseStateForUnknown(),
+						},
+					},
+				},
+			},
+			"bucket_quota": schema.SingleNestedAttribute{
+				MarkdownDescription: "Bucket quota settings",
+				Optional:            true,
+				Attributes: map[string]schema.Attribute{
+					"enabled": schema.BoolAttribute{
+						MarkdownDescription: "Enable or disable bucket quota",
+						Required:            true,
+					},
+					"max_size_kb": schema.Int64Attribute{
+						MarkdownDescription: "Maximum size in KB. If not set or -1, it means unlimited.",
+						Optional:            true,
+						Computed:            true,
+						PlanModifiers: []planmodifier.Int64{
+							int64DefaultModifier{-1},
+							int64planmodifier.UseStateForUnknown(),
+						},
+					},
+					"max_objects": schema.Int64Attribute{
+						MarkdownDescription: "Maximum number of objects. If not set or -1, it means unlimited.",
+						Optional:            true,
+						Computed:            true,
+						PlanModifiers: []planmodifier.Int64{
+							int64DefaultModifier{-1},
+							int64planmodifier.UseStateForUnknown(),
+						},
+					},
+				},
 			},
 		},
 	}
@@ -264,6 +337,24 @@ func (r *UserResource) Create(ctx context.Context, req resource.CreateRequest, r
 	} else {
 		data.AccessKey = types.StringNull()
 		data.SecretKey = types.StringNull()
+	}
+
+	// Set user quota if configured
+	if data.UserQuota != nil {
+		err = r.setQuota(ctx, rgwUser.ID, "user", data.UserQuota)
+		if err != nil {
+			resp.Diagnostics.AddError("could not set user quota", err.Error())
+			return
+		}
+	}
+
+	// Set bucket quota if configured
+	if data.BucketQuota != nil {
+		err = r.setQuota(ctx, rgwUser.ID, "bucket", data.BucketQuota)
+		if err != nil {
+			resp.Diagnostics.AddError("could not set bucket quota", err.Error())
+			return
+		}
 	}
 
 	// Save data into Terraform state
@@ -391,6 +482,26 @@ func (r *UserResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 		data.SecretKey = types.StringNull()
 	}
 
+	// Read user quota if it was configured
+	if data.UserQuota != nil {
+		userQuota, err := r.getQuota(ctx, data.Id.ValueString(), "user")
+		if err != nil {
+			resp.Diagnostics.AddError("could not get user quota", err.Error())
+			return
+		}
+		data.UserQuota = userQuota
+	}
+
+	// Read bucket quota if it was configured
+	if data.BucketQuota != nil {
+		bucketQuota, err := r.getQuota(ctx, data.Id.ValueString(), "bucket")
+		if err != nil {
+			resp.Diagnostics.AddError("could not get bucket quota", err.Error())
+			return
+		}
+		data.BucketQuota = bucketQuota
+	}
+
 	// Save updated data into Terraform state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
@@ -508,6 +619,24 @@ func (r *UserResource) Update(ctx context.Context, req resource.UpdateRequest, r
 		}
 	}
 
+	// Update user quota if configured
+	if data.UserQuota != nil {
+		err = r.setQuota(ctx, data.Id.ValueString(), "user", data.UserQuota)
+		if err != nil {
+			resp.Diagnostics.AddError("could not set user quota", err.Error())
+			return
+		}
+	}
+
+	// Update bucket quota if configured
+	if data.BucketQuota != nil {
+		err = r.setQuota(ctx, data.Id.ValueString(), "bucket", data.BucketQuota)
+		if err != nil {
+			resp.Diagnostics.AddError("could not set bucket quota", err.Error())
+			return
+		}
+	}
+
 	// Save updated data into Terraform state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
@@ -616,4 +745,55 @@ func (r *UserResource) ImportState(ctx context.Context, req resource.ImportState
 			resp.State.SetAttribute(ctx, path.Root("exclusive_s3_credentials"), false)
 		}
 	}
+}
+
+// setQuota sets user or bucket quota
+func (r *UserResource) setQuota(ctx context.Context, userId string, quotaType string, quota *UserQuotaModel) error {
+	enabled := quota.Enabled.ValueBool()
+	maxSizeKb := int(quota.MaxSizeKb.ValueInt64())
+	maxObjects := quota.MaxObjects.ValueInt64()
+
+	quotaSpec := admin.QuotaSpec{
+		UID:        userId,
+		QuotaType:  quotaType,
+		Enabled:    &enabled,
+		MaxSizeKb:  &maxSizeKb,
+		MaxObjects: &maxObjects,
+	}
+
+	return r.client.Admin.SetUserQuota(ctx, quotaSpec)
+}
+
+// getQuota gets user or bucket quota
+func (r *UserResource) getQuota(ctx context.Context, userId string, quotaType string) (*UserQuotaModel, error) {
+	quotaSpec := admin.QuotaSpec{
+		UID:       userId,
+		QuotaType: quotaType,
+	}
+
+	quota, err := r.client.Admin.GetUserQuota(ctx, quotaSpec)
+	if err != nil {
+		return nil, err
+	}
+
+	model := &UserQuotaModel{}
+	if quota.Enabled != nil {
+		model.Enabled = types.BoolValue(*quota.Enabled)
+	} else {
+		model.Enabled = types.BoolValue(false)
+	}
+
+	if quota.MaxSizeKb != nil {
+		model.MaxSizeKb = types.Int64Value(int64(*quota.MaxSizeKb))
+	} else {
+		model.MaxSizeKb = types.Int64Value(-1)
+	}
+
+	if quota.MaxObjects != nil {
+		model.MaxObjects = types.Int64Value(*quota.MaxObjects)
+	} else {
+		model.MaxObjects = types.Int64Value(-1)
+	}
+
+	return model, nil
 }

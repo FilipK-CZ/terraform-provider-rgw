@@ -22,6 +22,7 @@ Ceph RGW User
 
 ### Optional
 
+- `bucket_quota` (Attributes) Bucket quota settings (see [below for nested schema](#nestedatt--bucket_quota))
 - `caps` (Attributes List) (see [below for nested schema](#nestedatt--caps))
 - `email` (String) The email address associated with the user.
 - `exclusive_s3_credentials` (Boolean) Specify how to deal with s3 credentials for this user not managed by this resource. Set to `true` to delete all other s3 credentials. Set to `false` to ignore other credentials.
@@ -31,6 +32,7 @@ Ceph RGW User
 - `purge_data_on_delete` (Boolean) Purge user data on deletion
 - `suspended` (Boolean) Specify whether the user should be suspended.
 - `tenant` (String) The tenant under which a user is a part of.
+- `user_quota` (Attributes) User quota settings (see [below for nested schema](#nestedatt--user_quota))
 
 ### Read-Only
 
@@ -39,6 +41,19 @@ Ceph RGW User
 - `principal` (String) Computed principal to be used in policies
 - `secret_key` (String) The generated secret key
 
+<a id="nestedatt--bucket_quota"></a>
+### Nested Schema for `bucket_quota`
+
+Required:
+
+- `enabled` (Boolean) Enable or disable bucket quota
+
+Optional:
+
+- `max_objects` (Number) Maximum number of objects. If not set or -1, it means unlimited.
+- `max_size_kb` (Number) Maximum size in KB. If not set or -1, it means unlimited.
+
+
 <a id="nestedatt--caps"></a>
 ### Nested Schema for `caps`
 
@@ -46,5 +61,18 @@ Required:
 
 - `perm` (String)
 - `type` (String)
+
+
+<a id="nestedatt--user_quota"></a>
+### Nested Schema for `user_quota`
+
+Required:
+
+- `enabled` (Boolean) Enable or disable user quota
+
+Optional:
+
+- `max_objects` (Number) Maximum number of objects. If not set or -1, it means unlimited.
+- `max_size_kb` (Number) Maximum size in KB. If not set or -1, it means unlimited.
 
 
