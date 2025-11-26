@@ -294,19 +294,34 @@ func (r *UserResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 		return
 	}
 
-	// check resource id
-	if data.Id.ValueString() != user.ID {
-		resp.Diagnostics.AddError("api returned wrong user", fmt.Sprintf("expected user '%s', got '%s'", data.Id.ValueString(), user.ID))
+	// check resource id - handle both full ID (tenant$username) and username-only formats
+	expectedId := data.Id.ValueString()
+	actualId := user.ID
+
+	// If we expect tenant$username but got username, reconstruct the expected username
+	if strings.Contains(expectedId, "$") {
+		parts := strings.SplitN(expectedId, "$", 2)
+		if len(parts) == 2 && actualId != expectedId && actualId == parts[1] {
+			// API returned username only, but we expected tenant$username - this is acceptable
+			// We'll update username/tenant fields below based on the stored ID
+		} else if actualId != expectedId {
+			resp.Diagnostics.AddError("api returned wrong user", fmt.Sprintf("expected user '%s', got '%s'", expectedId, actualId))
+			return
+		}
+	} else if actualId != expectedId {
+		resp.Diagnostics.AddError("api returned wrong user", fmt.Sprintf("expected user '%s', got '%s'", expectedId, actualId))
 		return
 	}
 
-	// update username and tenant
-	splittedId := strings.SplitN(user.ID, "$", 2)
+	// update username and tenant based on the stored ID (not the API response)
+	// Use the expected ID from state to handle cases where API returns different format
+	idToSplit := expectedId
+	splittedId := strings.SplitN(idToSplit, "$", 2)
 	if len(splittedId) == 2 {
 		data.Username = types.StringValue(splittedId[1])
 		data.Tenant = types.StringValue(splittedId[0])
 	} else {
-		data.Username = types.StringValue(user.ID)
+		data.Username = types.StringValue(idToSplit)
 		data.Tenant = types.StringNull()
 	}
 
