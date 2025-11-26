@@ -23,4 +23,12 @@ Bucket in Ceph RGW
 
 - `id` (String) Example identifier
 
+## Import
+
+Import is supported using the following syntax:
+
+```shell
+# Buckets can be imported using the bucket name
+terraform import rgw_bucket.example my-bucket-name
+```
 

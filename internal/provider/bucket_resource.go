@@ -8,6 +8,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/smithy-go"
+	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
@@ -18,6 +19,7 @@ import (
 
 // Ensure provider defined types fully satisfy framework interfaces.
 var _ resource.ResourceWithConfigure = &BucketResource{}
+var _ resource.ResourceWithImportState = &BucketResource{}
 
 func NewBucketResource() resource.Resource {
 	return &BucketResource{}
@@ -179,4 +181,35 @@ func (r *BucketResource) Delete(ctx context.Context, req resource.DeleteRequest,
 		resp.Diagnostics.AddError("could not delete bucket", err.Error())
 		return
 	}
+}
+
+func (r *BucketResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
+	// The import ID should be the bucket name
+	bucketName := req.ID
+
+	// Verify the bucket exists by performing a HeadBucket operation
+	s3req := &s3.HeadBucketInput{
+		Bucket: aws.String(bucketName),
+	}
+
+	_, err := r.client.S3.HeadBucket(ctx, s3req)
+	if err != nil {
+		var ae smithy.APIError
+		if errors.As(err, &ae) {
+			switch ae.ErrorCode() {
+			case "404":
+				resp.Diagnostics.AddError("bucket not found", fmt.Sprintf("bucket %s does not exist", bucketName))
+				return
+			case "403":
+				resp.Diagnostics.AddError("no permission to access bucket", err.Error())
+				return
+			}
+		}
+		resp.Diagnostics.AddError("could not verify bucket", err.Error())
+		return
+	}
+
+	// Set both id and name to the bucket name
+	resp.State.SetAttribute(ctx, path.Root("id"), bucketName)
+	resp.State.SetAttribute(ctx, path.Root("name"), bucketName)
 }
