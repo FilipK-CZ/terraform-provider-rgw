@@ -18,7 +18,6 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
-	"github.com/hashicorp/terraform-plugin-log/tflog"
 )
 
 const accessKeyBytes = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
@@ -443,32 +442,39 @@ func (r *UserResource) Update(ctx context.Context, req resource.UpdateRequest, r
 		return
 	}
 
-	// manage s3 keys
-	tflog.Info(ctx, fmt.Sprintf("Access Key unknown: %t, Secret Key unknown: %t", data.AccessKey.IsUnknown(), data.SecretKey.IsUnknown()))
-	if data.SecretKey.IsUnknown() {
-		if len(user.Keys) > 0 {
-			for _, k := range user.Keys {
-				if !data.AccessKey.IsNull() && data.SecretKey.IsUnknown() && k.AccessKey == data.AccessKey.ValueString() {
-					data.SecretKey = types.StringValue(k.SecretKey)
-					resp.Diagnostics.Append(resp.Private.SetKey(ctx, "mark_unknown_secret_key", []byte("0"))...)
-				} else if data.ExclusiveS3Credentials.ValueBool() || data.ExclusiveS3Credentials.IsNull() {
-					k.UID = user.ID
-					if err := r.client.Admin.RemoveKey(ctx, k); err != nil {
-						resp.Diagnostics.AddError(fmt.Sprintf("could not remove access key '%s'", k.AccessKey), err.Error())
-					}
-				}
-			}
-		}
+	// Preserve existing S3 credentials during updates - only regenerate if explicitly requested
+	// Read existing state to get current credentials
+	var state *UserResourceModel
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 
-		if data.SecretKey.IsUnknown() {
-			tflog.Info(ctx, "Secret key still null")
-			if data.AccessKey.IsUnknown() {
-				a := make([]byte, 20)
-				for i := range a {
-					a[i] = accessKeyBytes[rand.Intn(len(accessKeyBytes))]
-				}
-				data.AccessKey = types.StringValue(string(a))
+	// If we have existing credentials in state, preserve them
+	if !state.AccessKey.IsNull() && !state.SecretKey.IsNull() {
+		data.AccessKey = state.AccessKey
+		data.SecretKey = state.SecretKey
+		data.Principal = state.Principal // Preserve the principal ARN as well
+	} else if len(user.Keys) > 0 {
+		// If no state credentials but API has keys, use the first one
+		data.AccessKey = types.StringValue(user.Keys[0].AccessKey)
+		data.SecretKey = types.StringValue(user.Keys[0].SecretKey)
+		// Set principal ARN
+		if data.Tenant.IsNull() {
+			data.Principal = types.StringValue(fmt.Sprintf("arn:aws:iam:::user/%s", data.Username.ValueString()))
+		} else {
+			data.Principal = types.StringValue(fmt.Sprintf("arn:aws:iam::%s:user/%s", data.Tenant.ValueString(), data.Username.ValueString()))
+		}
+	} else {
+		// No existing credentials and no API keys - this shouldn't happen in normal updates
+		// but if it does, generate new credentials
+		if data.GenerateS3Credentials.ValueBool() || data.GenerateS3Credentials.IsNull() {
+			// Generate new access key
+			a := make([]byte, 20)
+			for i := range a {
+				a[i] = accessKeyBytes[rand.Intn(len(accessKeyBytes))]
 			}
+			data.AccessKey = types.StringValue(string(a))
 
 			generate := true
 			keys, err := r.client.Admin.CreateKey(ctx, admin.UserKeySpec{
@@ -482,21 +488,20 @@ func (r *UserResource) Update(ctx context.Context, req resource.UpdateRequest, r
 				return
 			}
 
-			if keys != nil {
+			if keys != nil && len(*keys) > 0 {
 				for _, k := range *keys {
 					if k.AccessKey == data.AccessKey.ValueString() {
 						data.SecretKey = types.StringValue(k.SecretKey)
-						tflog.Info(ctx, "found generated secret key")
 						break
 					}
 				}
 			}
 
-			if data.SecretKey.IsUnknown() {
-				resp.Diagnostics.AddError("could not find expected s3 credentials in api response", fmt.Sprintf("got %d s3 key pairs back from api, none of the matched the access key '%s'", len(*keys), data.AccessKey.ValueString()))
+			// Set principal ARN
+			if data.Tenant.IsNull() {
+				data.Principal = types.StringValue(fmt.Sprintf("arn:aws:iam:::user/%s", data.Username.ValueString()))
 			} else {
-				resp.Diagnostics.Append(resp.Private.SetKey(ctx, "mark_unknown_access_key", []byte("0"))...)
-				resp.Diagnostics.Append(resp.Private.SetKey(ctx, "mark_unknown_secret_key", []byte("0"))...)
+				data.Principal = types.StringValue(fmt.Sprintf("arn:aws:iam::%s:user/%s", data.Tenant.ValueString(), data.Username.ValueString()))
 			}
 		}
 	}
